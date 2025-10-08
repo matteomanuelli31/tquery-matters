@@ -1,6 +1,6 @@
-## get tquery
+# get tquery
 
-### prerequisites
+## prerequisites
 + `java` jdk 21
 + `jolie` installed
 + `npm`
@@ -58,10 +58,10 @@ jolie test_tquery.ol
 rm test_tquery.ol
 ```
 
-## use cases where tquery would save our bacon
+# use cases where tquery would save our bacon
 
+## **1) Problem:** filter all operations s.t.: method == "get" AND requiresAuth == true AND "admin" in tags. simple - isn't it?
 (see working example [here](nasty-nested.ol))
-**Problem:** filter all operations s.t.: method == "get" AND requiresAuth == true AND "admin" in tags. simple - isn't it?
 
 ```jolie
 apiData.operations[0] << {
@@ -204,3 +204,66 @@ Becomes a **pure declarative pipeline** (no loops, no conditionals):
 unwind "operations" → match (method AND auth) → unwind "operations.tags" → match (admin)
 ```
 
+
+## **2) Problem**: make flexible-yet-typed API
+(run `./AnyToArr/test.sh` from top root dir)
+
+say client wanna send values, but very often it is either just one value or no value.
+Structured approach would impose server to "add type annotation by marking field as, say, array of strings in the interface definition".
+But it would be very cumbersome because:
++ add boilerplate & less readable code to client
+```json
+{
+  "participants": ["John"]
+}
+```
+*vs*
+```json
+{
+  "participants": "John"
+}
+```
+
+or
+
+```json
+{
+  "participants": []
+}
+```
+*vs*
+```json
+{
+    // no field "participants". Intuitively, it means no participants...
+}
+```
+
++ *defensive programming* in server-side's code
+
+<!-- servers need to normalize data in order to handle heterogeneous data in one single way (e.g. Any -> [string]), leading to **if-special-case programming** + **defensive programming** (e.g. check len of array before accessing it...) all the time! -->
+e.g. check len of array (before accessing it...), check if the field is defined, etc all the time!
+
+**WITHOUT TQuery**: Manual checks
+```jolie
+if (is_defined(request.tags)) {
+    if (#request.tags == 1) {
+        output.tags._ << request.tags  // Convert to array
+    } else {
+        output.tags << request.tags     // Copy array
+    }
+}
+```
+
+**WITH TQuery**: Automatic normalization
+```jolie
+unwind@TQuery({
+    data << request
+    query = "tags"
+})(unwound);
+
+for (i = 0, i < #unwound.result, i++) {
+    output.tags[i] = unwound.result[i].tags
+}
+```
+
+no matter what the client sent us, we get the same result in a more general way!
