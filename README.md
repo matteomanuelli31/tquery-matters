@@ -205,6 +205,179 @@ unwind "operations" → match (method AND auth) → unwind "operations.tags" →
 ```
 
 
+## **1b)**: Problem: Find All "in_progress" Projects Across All Companies from [companies.json](companies.json) (simple json analysis)
+showing how tquery's nested path unwinding eliminates 4 levels of nested loops
+
+(to run execute from top root dir `jolie companies_demo/companies_demo.ol`)
+
+## Data Structure
+
+```
+companies.json:
+  companies[0..10]
+    └─ company
+         ├─ name
+         ├─ headquarters
+         └─ departments[0..N]
+              ├─ id
+              ├─ name
+              └─ teams[0..N]
+                   ├─ team_id
+                   ├─ team_name
+                   └─ projects[0..N]
+                        ├─ project_id
+                        ├─ name
+                        ├─ status (in_progress, planning, completed, testing)
+                        └─ technologies[]
+```
+
+**4 LEVELS DEEP**: companies → departments → teams → projects
+
+## WITHOUT TQUERY: 4 Nested Loops
+
+```jolie
+// Load data
+readFile@File({ filename = "companies.json", format = "json" })(data);
+
+resultCount = 0;
+for (c = 0, c < #data.companies, c++) {                              // LOOP 1: companies
+    company -> data.companies[c].company;
+
+    for (d = 0, d < #company.departments, d++) {                     // LOOP 2: departments
+        dept -> company.departments[d];
+
+        for (t = 0, t < #dept.teams, t++) {                          // LOOP 3: teams
+            team -> dept.teams[t];
+
+            for (p = 0, p < #team.projects, p++) {                   // LOOP 4: projects
+                project -> team.projects[p];
+
+                if (project.status == "in_progress") {               // CHECK
+                    result[resultCount] << project;
+                    result[resultCount].company_name = company.name;
+                    result[resultCount].team_name = team.team_name;
+                    resultCount++
+                }
+            }
+        }
+    }
+}
+
+```
+
+**Problems**:
+- 4 nested loops (for → for → for → for)
+- 1 if check scattered inside deepest loop
+- Must traverse entire tree even if only 1 project matches
+- Cumbersome to extend (e.g. what if we wanted to filter by technology as well?)
+- Code scattered across 4 nesting levels
+
+## WITH TQUERY: ONE Unwind + ONE Match
+
+```jolie
+// Load data
+readFile@File({ filename = "companies.json", format = "json" })(data);
+
+// ================================================================
+// STEP 1: Flatten ALL 4 LEVELS with ONE unwind
+// ================================================================
+unwind@TQuery({
+    data << data
+    query = "companies.company.departments.teams.projects"
+})(unwoundProjects);
+
+/* HOW UNWIND WORKS:
+
+   The query "companies.company.departments.teams.projects" tells TQuery:
+   "Follow this path through the nested structure. Every time you encounter
+   an array, create a separate result element for each array item, preserving
+   the full path from root to that element.
+
+*/
+
+// ================================================================
+// STEP 2: Filter by status = "in_progress" declaratively
+// ================================================================
+match@TQuery({
+    data << unwoundProjects.result
+    query.equal << {
+        path = "companies.company.departments.teams.projects.status"
+        data = "in_progress"
+    }
+})(filtered);
+
+// ================================================================
+// STEP 3: Direct copy to result w/out loops
+// ================================================================
+result << filtered.result;
+
+```
+
+```
+WITHOUT TQUERY (imperative):
+┌─────────────────────────────────────────┐
+│ for companies                           │ ← Loop 1
+│   ├─ for departments                    │ ← Loop 2
+│   │   ├─ for teams                      │ ← Loop 3
+│   │   │   ├─ for projects               │ ← Loop 4
+│   │   │   │   └─ if status=="in_progress"│ ← Check (18 lines deep!)
+│   │   │   │       ADD TO RESULT          │
+└─────────────────────────────────────────┘
+```
+
+```
+WITH TQUERY (declarative):
+┌─────────────────────────────────────────┐
+│ unwind "companies...projects"           │ ← Flatten 4 levels
+│   ↓                                     │
+│ match status == "in_progress"           │ ← Filter declaratively
+│   ↓                                     │
+│ result << filtered.result               │ ← Direct copy!
+└─────────────────────────────────────────┘
+```
+
+## Advanced Example: Multiple Filters
+
+(to run execute from top root dir `jolie companies_demo/companies_demo_advanced.ol`)
+
+
+Want projects that are:
+- Status: "in_progress"
+- Technology includes: "Python"
+
+```jolie
+// STEP 1: Unwind (same as before)
+unwind@TQuery({
+    data << data
+    query = "companies.company.departments.teams.projects"
+})(unwoundProjects);
+
+// STEP 2: Filter by status
+match@TQuery({
+    data << unwoundProjects.result
+    query.equal << {
+        path = "companies.company.departments.teams.projects.status"
+        data = "in_progress"
+    }
+})(statusFiltered);
+
+// STEP 3: Unwind technologies array
+unwind@TQuery({
+    data << statusFiltered.result
+    query = "companies.company.departments.teams.projects.technologies"
+})(unwoundTechs);
+
+// STEP 4: Filter by technology
+match@TQuery({
+    data << unwoundTechs.result
+    query.equal << {
+        path = "companies.company.departments.teams.projects.technologies"
+        data = "Python"
+    }
+})(result);
+```
+
+
 ## **2) Problem**: make flexible-yet-typed API
 (run `./AnyToArr/test.sh` from top root dir)
 
