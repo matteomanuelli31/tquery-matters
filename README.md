@@ -377,6 +377,175 @@ match@TQuery({
 })(result);
 ```
 
+## **1c) Problem:** group scattered heterogeneous data from a nested structure
+
+(run `jolie parameter_filtering.ol`)
+
+### e.g. data Structure
+
+```
+paths[0]
+  └─ methods[0] "get"
+       └─ parameters[0] { in: "query", name: "page", type: "integer" }
+       └─ parameters[1] { in: "header", name: "Authorization", type: "string" }
+  └─ methods[1] "post"
+       └─ parameters[0] { in: "body", name: "user", schema: {...} }
+       └─ parameters[1] { in: "header", name: "Content-Type", type: "string" }
+
+paths[1]
+  └─ methods[0] "get"
+       └─ parameters[0] { in: "path", name: "id", type: "string" }
+       └─ parameters[1] { in: "header", name: "Authorization", type: "string" }
+```
+
+
+### WITHOUT TQUERY
+
+```jolie
+// GOAL: extract into {body, path, query, header}Params array
+
+
+bodyCount = 0;
+pathCount = 0;
+queryCount = 0;
+headerCount = 0;
+
+for (p = 0, p < #data.paths, p++) {                          // LOOP 1: paths
+    for (m = 0, m < #data.paths[p].methods, m++) {           // LOOP 2: methods
+        for (par = 0, par < #data.paths[p].methods[m].parameters, par++) {  // LOOP 3: parameters
+            param -> data.paths[p].methods[m].parameters[par];
+
+            if (param.in == "body") {                         // CHECK 1
+                bodyParams[bodyCount++] << param
+            } else if (param.in == "path") {                  // CHECK 2
+                pathParams[pathCount++] << param
+            } else if (param.in == "query") {                 // CHECK 3
+                queryParams[queryCount++] << param
+            } else if (param.in == "header") {                // CHECK 4
+                headerParams[headerCount++] << param
+            }
+        }
+    }
+}
+```
+
+**Problems**:
+- 3 nested loops (for → for → for)
+- 4 if/else conditionals
+- Manual counter tracking (`bodyCount++`)
+- Must traverse ALL parameters for EVERY check
+- Scattered logic - each type mixed with others
+
+### WITH TQUERY
+
+```jolie
+// STEP 1: Flatten ALL parameters from ALL methods from ALL paths
+unwind@TQuery({
+    data << data
+    query = "paths.methods.parameters"
+})(unwoundParams);
+// Each record preserves FULL CONTEXT: path name, method name, AND parameter data.
+
+
+// STEP 2a: Filter ONLY body parameters
+match@TQuery({
+    data << unwoundParams.result
+    query.equal << {
+        path = "paths.methods.parameters.in"
+        data = "body"
+    }
+})(bodyParamsTQ);
+
+// STEP 2b: Filter ONLY path parameters
+match@TQuery({
+    data << unwoundParams.result
+    query.equal << {
+        path = "paths.methods.parameters.in"
+        data = "path"
+    }
+})(pathParamsTQ);
+
+// STEP 2c: Filter ONLY query parameters
+match@TQuery({
+    data << unwoundParams.result
+    query.equal << {
+        path = "paths.methods.parameters.in"
+        data = "query"
+    }
+})(queryParamsTQ);
+
+// STEP 2d: Filter ONLY header parameters
+match@TQuery({
+    data << unwoundParams.result
+    query.equal << {
+        path = "paths.methods.parameters.in"
+        data = "header"
+    }
+})(headerParamsTQ);
+
+/* BONUS
+
+// Instead of: if (param.in instanceof InBody)
+// Use: Check if specific fields exist
+
+// Get all parameters with schema field (body parameters)
+match@TQuery({
+  data << unwoundParams.result
+  query.exists = "paths.methods.parameters.schema"
+})(bodyParams);
+
+(you can use AND filters)
+
+*/
+
+// STEP 3: Direct copy
+bodyResult << bodyParamsTQ.result;
+pathResult << pathParamsTQ.result;
+queryResult << queryParamsTQ.result;
+headerResult << headerParamsTQ.result;
+```
+
+
+### How Unwind Eliminates Triple Nesting
+
+`query = "paths.methods.parameters"` flattens 3 levels in ONE operation
+
+```
+WITHOUT TQUERY:
+for paths        ← Loop 1
+  for methods    ← Loop 2
+    for params   ← Loop 3
+      process
+
+WITH TQUERY:
+unwind "paths.methods.parameters"  ← Flattens ALL 3 levels
+→ Flat array ready for filtering
+```
+
+### How Match Eliminates Conditionals
+
+`query.equal` selects matching records
+
+```
+WITHOUT TQUERY:
+if (param.in == "body") {
+    bodyParams[count++] << param
+} else if (param.in == "path") {
+    pathParams[count++] << param
+}
+// ... repeat for each type
+
+WITH TQUERY:
+match@TQuery({
+    query.equal << { path = "...in", data = "body" }
+})(bodyParams);
+
+match@TQuery({
+    query.equal << { path = "...in", data = "path" }
+})(pathParams);
+```
+
+
 
 ## **2) Problem**: make flexible-yet-typed API
 (run `./AnyToArr/test.sh` from top root dir)
@@ -439,4 +608,4 @@ for (i = 0, i < #unwound.result, i++) {
 }
 ```
 
-no matter what the client sent us, we get the same result in a more general way!
+no matter what the client sent us, we get the same result in a more general way! (btw: the interface will declare `string*` as param type)

@@ -1,0 +1,152 @@
+{
+  "paths": [
+    {
+      "pathName": "/users",
+      "methods": [
+        {
+          "methodName": "get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "page",
+              "type": "integer",
+              "required": false
+            },
+            {
+              "in": "query",
+              "name": "limit",
+              "type": "integer",
+              "required": false
+            },
+            {
+              "in": "header",
+              "name": "Authorization",
+              "type": "string",
+              "required": true
+            }
+          ]
+        },
+        {
+          "methodName": "post",
+          "parameters": [
+            {
+              "in": "body",
+              "name": "user",
+              "required": true,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": { "type": "string" },
+                  "email": { "type": "string" }
+                }
+              }
+            },
+            {
+              "in": "header",
+              "name": "Content-Type",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pathName": "/users/{id}",
+      "methods": [
+        {
+          "methodName": "get",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "id",
+              "type": "string",
+              "required": true
+            },
+            {
+              "in": "header",
+              "name": "Authorization",
+              "type": "string",
+              "required": true
+            }
+          ]
+        },
+        {
+          "methodName": "put",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "id",
+              "type": "string",
+              "required": true
+            },
+            {
+              "in": "body",
+              "name": "user",
+              "required": true,
+              "schema": {
+                "type": "object"
+              }
+            },
+            {
+              "in": "header",
+              "name": "Authorization",
+              "type": "string",
+              "required": true
+            }
+          ]
+        },
+        {
+          "methodName": "delete",
+          "parameters": [
+            {
+              "in": "path",
+              "name": "id",
+              "type": "string",
+              "required": true
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pathName": "/posts",
+      "methods": [
+        {
+          "methodName": "get",
+          "parameters": [
+            {
+              "in": "query",
+              "name": "category",
+              "type": "string",
+              "required": false
+            },
+            {
+              "in": "query",
+              "name": "status",
+              "type": "string",
+              "required": false
+            }
+          ]
+        },
+        {
+          "methodName": "post",
+          "parameters": [
+            {
+              "in": "body",
+              "name": "post",
+              "required": true,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": { "type": "string" },
+                  "content": { "type": "string" }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
