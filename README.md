@@ -346,36 +346,29 @@ Want projects that are:
 - Technology includes: "Python"
 
 ```jolie
-// STEP 1: Unwind (same as before)
+// STEP 1: Unwind to deepest level (technologies) - ONE unwind flattens ALL levels
 unwind@TQuery({
     data << data
-    query = "companies.company.departments.teams.projects"
-})(unwoundProjects);
-
-// STEP 2: Filter by status
-match@TQuery({
-    data << unwoundProjects.result
-    query.equal << {
-        path = "companies.company.departments.teams.projects.status"
-        data = "in_progress"
-    }
-})(statusFiltered);
-
-// STEP 3: Unwind technologies array
-unwind@TQuery({
-    data << statusFiltered.result
     query = "companies.company.departments.teams.projects.technologies"
 })(unwoundTechs);
 
-// STEP 4: Filter by technology
+// STEP 2: Apply BOTH filters in ONE match using query.and
 match@TQuery({
     data << unwoundTechs.result
-    query.equal << {
-        path = "companies.company.departments.teams.projects.technologies"
-        data = "Python"
+    query.and << {
+        left.equal << {
+            path = "companies.company.departments.teams.projects.status"
+            data = "in_progress"
+        }
+        right.equal << {
+            path = "companies.company.departments.teams.projects.technologies"
+            data = "Python"
+        }
     }
 })(result);
 ```
+
+**Key Improvement**: Instead of 4 operations (unwind → match → unwind → match), we now use just **2 operations** (unwind → match with AND)
 
 ## **1c) Problem:** group scattered heterogeneous data from a nested structure
 

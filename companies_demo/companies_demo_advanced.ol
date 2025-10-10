@@ -17,27 +17,20 @@ service CompaniesDemoAdvanced {
 
         unwind@TQuery({
             data << data
-            query = "companies.company.departments.teams.projects"
-        })(unwoundProjects);
-
-        match@TQuery({
-            data << unwoundProjects.result
-            query.equal << {
-                path = "companies.company.departments.teams.projects.status"
-                data = "in_progress"
-            }
-        })(statusFiltered);
-
-        unwind@TQuery({
-            data << statusFiltered.result
             query = "companies.company.departments.teams.projects.technologies"
         })(unwoundTechs);
 
         match@TQuery({
             data << unwoundTechs.result
-            query.equal << {
-                path = "companies.company.departments.teams.projects.technologies"
-                data = "Python"
+            query.and << {
+                left.equal << {
+                    path = "companies.company.departments.teams.projects.status"
+                    data = "in_progress"
+                }
+                right.equal << {
+                    path = "companies.company.departments.teams.projects.technologies"
+                    data = "Python"
+                }
             }
         })(result);
 
