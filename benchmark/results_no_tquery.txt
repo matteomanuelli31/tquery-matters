@@ -1,0 +1,21 @@
+
+=== BENCHMARK RESULTS (WITHOUT TQuery) ===
+
+Configuration:
+  - Mode: WITHOUT TQuery
+  - Concurrent clients: 2
+  - Requests per client: 5
+  - Total requests: 10
+  - Errors: 0
+
+Timing Statistics (milliseconds):
+  - Min:  38ms
+  - Max:  130ms
+  - Avg:  95ms
+  - P50:  96ms
+  - P95:  130ms
+  - P99:  130ms
+
+Performance:
+  - Total time: 484ms
+  - Throughput: 20.66 req/sec
