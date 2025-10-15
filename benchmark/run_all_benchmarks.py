@@ -33,12 +33,18 @@ def start_server(cmd, log_file):
     kill_server()
     run_cmd(f"{cmd} > {log_file} 2>&1 &")
     time.sleep(3)
-    assert run_cmd("lsof -i :9000").returncode == 0, f"Server failed to start:\n{open(log_file).read()}"
+    assert (
+        run_cmd("lsof -i :9000").returncode == 0
+    ), f"Server failed to start:\n{open(log_file).read()}"
 
 
 async def make_request(session, filter_data, use_tquery):
     start = time.time()
-    async with session.post("http://localhost:9000/filterProjects", json={**filter_data, "useTQuery": use_tquery}, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+    async with session.post(
+        "http://localhost:9000/filterProjects",
+        json={**filter_data, "useTQuery": use_tquery},
+        timeout=aiohttp.ClientTimeout(total=60),
+    ) as resp:
         resp.raise_for_status()
         await resp.read()
         return int((time.time() - start) * 1000)
@@ -53,15 +59,21 @@ def monitor_memory(stop_event, mem_data, pid):
 
 async def run_requests(total_requests, use_tquery):
     async with aiohttp.ClientSession() as session:
-        tasks = [make_request(session, FILTERS[i % len(FILTERS)], use_tquery) for i in range(total_requests)]
+        tasks = [
+            make_request(session, FILTERS[i % len(FILTERS)], use_tquery)
+            for i in range(total_requests)
+        ]
         return await asyncio.gather(*tasks)
+
 
 def run_benchmark(name, total_requests, use_tquery, process_name) -> BenchmarkStats:
     print(f"{name}: {total_requests} parallel requests", end=" ... ", flush=True)
 
     mem_data, stop_event = [], threading.Event()
     pid = run_cmd(f"pgrep -f '{process_name}'").stdout.strip().split()[0]
-    monitor_thread = threading.Thread(target=monitor_memory, args=(stop_event, mem_data, pid), daemon=True)
+    monitor_thread = threading.Thread(
+        target=monitor_memory, args=(stop_event, mem_data, pid), daemon=True
+    )
     monitor_thread.start()
 
     timings = asyncio.run(run_requests(total_requests, use_tquery))
@@ -79,7 +91,8 @@ def run_benchmark(name, total_requests, use_tquery, process_name) -> BenchmarkSt
 
 
 def print_summary(stats_no_tq, stats_tq, stats_jsonpath):
-    print(f"""
+    print(
+        f"""
 {"=" * 70}
 BENCHMARK SUMMARY
 {"=" * 70}
@@ -90,7 +103,8 @@ BENCHMARK SUMMARY
 {'Max Heap (MB)':<20} {stats_no_tq['max_heap_mb']:<20.1f} {stats_tq['max_heap_mb']:<20.1f} {stats_jsonpath['max_heap_mb']:<20.1f}
 {'Young GC':<20} {stats_no_tq['ygc']:<20} {stats_tq['ygc']:<20} {stats_jsonpath['ygc']:<20}
 {'Full GC':<20} {stats_no_tq['fgc']:<20} {stats_tq['fgc']:<20} {stats_jsonpath['fgc']:<20}
-{"=" * 70}""")
+{"=" * 70}"""
+    )
 
 
 def main():
@@ -109,7 +123,10 @@ def main():
     stats_tq = run_benchmark("WITH TQuery", n, True, "benchmark/server.ol")
 
     # JsonPath
-    start_server("cd benchmark && gradle run -PmainClass=JsonPathServer", "/tmp/jsonpath_server.log")
+    start_server(
+        "cd benchmark && gradle run -PmainClass=JsonPathServer",
+        "/tmp/jsonpath_server.log",
+    )
     stats_jsonpath = run_benchmark("JsonPath", n, False, "JsonPathServer")
 
     kill_server()
@@ -117,6 +134,7 @@ def main():
 
 
 try:
+    kill_server()
     main()
 except KeyboardInterrupt:
     kill_server()

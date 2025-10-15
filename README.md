@@ -655,6 +655,9 @@ Java: OpenJDK 64-Bit Server VM (build 21.0.8+9-Debian-1)
 ```
 
 ## Prerequisites
+ ```bash
+sudo apt install gradle -y
+```
 
 ```bash
 # Install dependencies (first time only)
