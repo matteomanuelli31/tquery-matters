@@ -1,148 +1,123 @@
 #!/usr/bin/env python3
-import subprocess
-import time
-import sys
-import os
-import signal
+"""TQuery Benchmark Runner - Measures server performance under stress"""
+import subprocess, time, sys, statistics, threading, asyncio, aiohttp
+from typing import TypedDict
 
-def kill_port_9000():
-    """Kill any process listening on port 9000"""
-    try:
-        subprocess.run(['fuser', '-k', '9000/tcp'], stderr=subprocess.DEVNULL)
-        time.sleep(2)
-    except:
-        pass
 
-def start_server(heap_size):
-    """Start Jolie server with specified heap size"""
-    print(f"Starting server with heap size: {heap_size}")
+class BenchmarkStats(TypedDict):
+    p50: int
+    p95: int
+    max_heap_mb: float
+    ygc: int
+    fgc: int
 
-    cmd = [
-        'java',
-        f'-Xmx{heap_size}', f'-Xms{heap_size}',
-        '-Xlog:gc*:file=/tmp/gc.log:time,uptime,level,tags',
-        '-ea:jolie...', '-ea:joliex...',
-        '-Djava.rmi.server.codebase=file://usr/lib/jolie/extensions/rmi.jar',
-        '-cp', '/usr/lib/jolie/lib/libjolie.jar:/usr/lib/jolie/lib/automaton.jar:/usr/lib/jolie/lib/commons-text.jar:/usr/lib/jolie/lib/jolie-js.jar:/usr/lib/jolie/lib/json-simple.jar:/usr/lib/jolie/jolie.jar:/usr/lib/jolie/jolie-cli.jar',
-        'jolie.Jolie',
-        '-l', './lib/*:/usr/lib/jolie/lib:/usr/lib/jolie/javaServices/*:/usr/lib/jolie/extensions/*',
-        '-i', '/usr/lib/jolie/include',
-        '-p', '/usr/lib/jolie/packages',
-        'benchmark/server.ol'
-    ]
 
-    with open('/tmp/benchmark_server.log', 'w') as log:
-        subprocess.Popen(cmd, stdout=log, stderr=log)
+FILTERS = [
+    {"status": "in_progress", "technology": "Python"},
+    {"status": "completed", "technology": "Java"},
+    {"status": "testing", "technology": "C++"},
+    {"status": "planning", "technology": "Go"},
+]
 
-    time.sleep(3)
 
-    # Check if server started
-    result = subprocess.run(['lsof', '-i', ':9000'], capture_output=True)
-    if result.returncode == 0:
-        print("Server started successfully")
-        return True
-    else:
-        print("Error: Server failed to start")
-        with open('/tmp/benchmark_server.log', 'r') as f:
-            print(f.read())
-        return False
+def run_cmd(cmd):
+    return subprocess.run(cmd, shell=True, capture_output=True, text=True)
 
-def run_benchmark(num_clients, requests_per_client, use_tquery):
-    """Run a single benchmark"""
-    mode = "WITH TQuery" if use_tquery else "WITHOUT TQuery"
-    print(f"\n--- Running {mode} ---")
 
-    try:
-        subprocess.run([
-            'python3', 'benchmark/test.py',
-            str(num_clients), str(requests_per_client),
-            'true' if use_tquery else 'false'
-        ], timeout=180, check=True)
-        return True
-    except subprocess.TimeoutExpired:
-        print(f"WARNING: {mode} benchmark timed out (likely due to memory constraints)")
-        return False
-    except subprocess.CalledProcessError as e:
-        print(f"WARNING: {mode} benchmark failed with error: {e}")
-        return False
-
-def show_gc_stats():
-    """Show GC statistics from log"""
-    if os.path.exists('/tmp/gc.log'):
-        print("\n--- GC Statistics ---")
-        try:
-            result = subprocess.run(
-                ['grep', '-E', 'GC\\([0-9]+\\)', '/tmp/gc.log'],
-                capture_output=True, text=True
-            )
-            if result.stdout:
-                lines = result.stdout.strip().split('\n')
-                for line in lines[-5:]:
-                    print(line)
-            else:
-                print("No GC events recorded")
-        except:
-            print("Could not read GC log")
-    else:
-        print("\n--- No GC log found ---")
-
-def run_benchmarks_with_heap(num_clients, requests_per_client, heap_size):
-    """Run benchmarks with specific heap size"""
-    print("\n" + "="*50)
-    print(f"Benchmarking with heap size: {heap_size}")
-    print(f"Clients: {num_clients}, Requests per client: {requests_per_client}")
-    print("="*50)
-
-    # Clear GC log
-    if os.path.exists('/tmp/gc.log'):
-        os.remove('/tmp/gc.log')
-
-    # Kill existing server and start new one
-    kill_port_9000()
-    if not start_server(heap_size):
-        return
-
-    # Run WITHOUT TQuery
-    run_benchmark(num_clients, requests_per_client, False)
-
+def kill_server():
+    run_cmd("fuser -k 9000/tcp 2>/dev/null || true")
     time.sleep(2)
 
-    # Run WITH TQuery
-    run_benchmark(num_clients, requests_per_client, True)
 
-    # Show GC statistics
-    show_gc_stats()
+def start_server(cmd, log_file):
+    kill_server()
+    run_cmd(f"{cmd} > {log_file} 2>&1 &")
+    time.sleep(3)
+    assert run_cmd("lsof -i :9000").returncode == 0, f"Server failed to start:\n{open(log_file).read()}"
+
+
+async def make_request(session, filter_data, use_tquery):
+    start = time.time()
+    async with session.post("http://localhost:9000/filterProjects", json={**filter_data, "useTQuery": use_tquery}, timeout=aiohttp.ClientTimeout(total=60)) as resp:
+        resp.raise_for_status()
+        await resp.read()
+        return int((time.time() - start) * 1000)
+
+
+def monitor_memory(stop_event, mem_data, pid):
+    while not stop_event.wait(timeout=0.05):
+        vals = run_cmd(f"jstat -gc {pid} 1 1").stdout.strip().split("\n")[1].split()
+        heap_mb = sum(float(vals[i]) for i in [2, 3, 5, 7]) / 1024
+        mem_data.append((heap_mb, int(vals[12]), int(vals[14])))
+
+
+async def run_requests(total_requests, use_tquery):
+    async with aiohttp.ClientSession() as session:
+        tasks = [make_request(session, FILTERS[i % len(FILTERS)], use_tquery) for i in range(total_requests)]
+        return await asyncio.gather(*tasks)
+
+def run_benchmark(name, total_requests, use_tquery, process_name) -> BenchmarkStats:
+    print(f"{name}: {total_requests} parallel requests", end=" ... ", flush=True)
+
+    mem_data, stop_event = [], threading.Event()
+    pid = run_cmd(f"pgrep -f '{process_name}'").stdout.strip().split()[0]
+    monitor_thread = threading.Thread(target=monitor_memory, args=(stop_event, mem_data, pid), daemon=True)
+    monitor_thread.start()
+
+    timings = asyncio.run(run_requests(total_requests, use_tquery))
+
+    stop_event.set()
+    monitor_thread.join(timeout=2)
+
+    timings.sort()
+    p50, p95 = int(statistics.median(timings)), timings[int(len(timings) * 0.95)]
+    max_heap_mb = max(m[0] for m in mem_data)
+    ygc, fgc = mem_data[-1][1], mem_data[-1][2]
+
+    print("done")
+    return {"p50": p50, "p95": p95, "max_heap_mb": max_heap_mb, "ygc": ygc, "fgc": fgc}
+
+
+def print_summary(stats_no_tq, stats_tq, stats_jsonpath):
+    print(f"""
+{"=" * 70}
+BENCHMARK SUMMARY
+{"=" * 70}
+{'Metric':<20} {'WITHOUT TQuery':<20} {'WITH TQuery':<20} {'JsonPath':<20}
+{"-" * 70}
+{'P50 (ms)':<20} {stats_no_tq['p50']:<20} {stats_tq['p50']:<20} {stats_jsonpath['p50']:<20}
+{'P95 (ms)':<20} {stats_no_tq['p95']:<20} {stats_tq['p95']:<20} {stats_jsonpath['p95']:<20}
+{'Max Heap (MB)':<20} {stats_no_tq['max_heap_mb']:<20.1f} {stats_tq['max_heap_mb']:<20.1f} {stats_jsonpath['max_heap_mb']:<20.1f}
+{'Young GC':<20} {stats_no_tq['ygc']:<20} {stats_tq['ygc']:<20} {stats_jsonpath['ygc']:<20}
+{'Full GC':<20} {stats_no_tq['fgc']:<20} {stats_tq['fgc']:<20} {stats_jsonpath['fgc']:<20}
+{"=" * 70}""")
+
 
 def main():
-    # Change to project root
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    project_root = os.path.dirname(script_dir)
-    os.chdir(project_root)
+    n = int(sys.argv[1]) if len(sys.argv) > 1 else 10
 
-    print("="*50)
-    print("Running benchmarks...")
-    print("="*50)
+    jolie_cmd = """java -cp /usr/lib/jolie/lib/libjolie.jar:/usr/lib/jolie/lib/automaton.jar:/usr/lib/jolie/lib/commons-text.jar:/usr/lib/jolie/lib/jolie-js.jar:/usr/lib/jolie/lib/json-simple.jar:/usr/lib/jolie/jolie.jar:/usr/lib/jolie/jolie-cli.jar \
+        jolie.Jolie -l ./lib/*:/usr/lib/jolie/lib:/usr/lib/jolie/javaServices/*:/usr/lib/jolie/extensions/* \
+        -i /usr/lib/jolie/include -p /usr/lib/jolie/packages benchmark/server.ol"""
 
-    # Generate test data if not present
-    if not os.path.exists('benchmark/large_data.json'):
-        print("Generating test data...")
-        subprocess.run(['python3', 'benchmark/generate_data.py'])
+    # WITHOUT TQuery
+    start_server(jolie_cmd, "/tmp/jolie_server.log")
+    stats_no_tq = run_benchmark("WITHOUT TQuery", n, False, "benchmark/server.ol")
 
-    # Run benchmarks with 500MB heap
-    run_benchmarks_with_heap(2, 5, '500m')
+    # WITH TQuery
+    start_server(jolie_cmd, "/tmp/jolie_server.log")
+    stats_tq = run_benchmark("WITH TQuery", n, True, "benchmark/server.ol")
 
-    print("\n" + "="*50)
-    print("All benchmarks completed!")
-    print("Results saved in benchmark/results_*.txt")
-    print("="*50)
+    # JsonPath
+    start_server("cd benchmark && gradle run -PmainClass=JsonPathServer", "/tmp/jsonpath_server.log")
+    stats_jsonpath = run_benchmark("JsonPath", n, False, "JsonPathServer")
 
-    # Clean up
-    kill_port_9000()
+    kill_server()
+    print_summary(stats_no_tq, stats_tq, stats_jsonpath)
 
-if __name__ == '__main__':
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nBenchmark interrupted by user")
-        kill_port_9000()
-        sys.exit(1)
+
+try:
+    main()
+except KeyboardInterrupt:
+    kill_server()
+    exit("\nInterrupted")

@@ -607,80 +607,120 @@ no matter what the client sent us, we get the same result in a more general way!
 
 ## Setup
 
-A performance benchmark server was created in `benchmark/` to compare TQuery vs traditional nested loops for filtering deeply nested data.
+A performance benchmark compares TQuery vs traditional nested loops vs JsonPath for filtering deeply nested JSON data.
 
-**Dataset**: 6.3 MB JSON file with structure similar to `companies.json`
-- 60 companies with 5 departments each
-- Each department has 4 teams with 4 projects each
-- Total: 4,800 projects across companies → departments → teams → projects → technologies
+**Dataset**: `large_data.json`
+- 60 companies × 5 departments × 4 teams × 4 projects
+- Total: 4,800 projects across 4 nesting levels
 - Generated with `benchmark/generate_data.py`
 
-**Test**: The benchmark runs multiple requests filtering projects by various combinations of `status` and `technology`
-- Example filters: `{status: "in_progress", technology: "Python"}`, `{status: "completed", technology: "Java"}`, etc.
+**Verify dataset structure**:
+```bash
+python3 -c "
+import json
+with open('large_data.json') as f:
+    data = json.load(f)
 
-**Benchmark Scripts**:
-- `generate_data.py` - Generates test data
-- `test.py` - Runs individual benchmark tests
-- `run_all_benchmarks.py` - Automated benchmark runner
+companies = len(data['companies'])
+total_depts = sum(len(c['company']['departments']) for c in data['companies'])
+total_teams = sum(len(d['teams']) for c in data['companies'] for d in c['company']['departments'])
+total_projects = sum(len(t['projects']) for c in data['companies'] for d in c['company']['departments'] for t in d['teams'])
+
+print(f'Companies: {companies}')
+print(f'Departments: {total_depts}')
+print(f'Teams: {total_teams}')
+print(f'Projects: {total_projects}')
+print(f'Avg departments per company: {total_depts / companies:.1f}')
+print(f'Avg teams per department: {total_teams / total_depts:.1f}')
+print(f'Avg projects per team: {total_projects / total_teams:.1f}')
+"
+```
+
+**Test Query**: Filter projects by `status` AND `technology`
+- Example: `{status: "in_progress", technology: "Python"}`
+- Tests concurrent requests with varying load
+
+**Three Implementations**:
+1. **WITHOUT TQuery**: Traditional nested loops in Jolie
+2. **WITH TQuery**: Declarative filtering using TQuery
+3. **JsonPath**: Java implementation using JsonPath library
 
 ## System Information
 
 ```
-CPU: AMD Ryzen 9 7940HS w/ Radeon 780M Graphics (8 cores / 16 threads)
-Memory: 5.6 GB total
-Swap: 5.8 GB total
-OS: Debian GNU/Linux (kernel 6.12.48+deb13-amd64)
+CPU: Intel(R) Core(TM) 7 150U
+Memory: 15 GiB total
+OS: Debian GNU/Linux (kernel 6.1.0-40-amd64)
 Java: OpenJDK 64-Bit Server VM (build 21.0.8+9-Debian-1)
+```
+
+## Prerequisites
+
+```bash
+# Install dependencies (first time only)
+python3 -m venv venv
+venv/bin/pip install aiohttp
+
+# Generate test data (first time only)
+python3 benchmark/generate_data.py
+
+# Build JsonPath server (first time only)
+cd benchmark && gradle build && cd ..
 ```
 
 ## How to Run
 
-### Automated Benchmark (Recommended)
-
 ```bash
-# Run all benchmarks automatically
-python3 benchmark/run_all_benchmarks.py
+# Run benchmark with N parallel requests
+venv/bin/python3 benchmark/run_all_benchmarks.py <N>
+
+# Examples
+venv/bin/python3 benchmark/run_all_benchmarks.py 5
+venv/bin/python3 benchmark/run_all_benchmarks.py 7
 ```
 
-### Manual Benchmark
+**Output**: Summary table with performance metrics
 
-```bash
-cd benchmark
-
-# Generate test data
-python3 generate_data.py
-
-# Start server manually with JVM options (from tquery-matters root)
-cd ..
-java -Xmx500m -Xms500m \
-    -Xlog:gc*:file=/tmp/gc.log:time,uptime,level,tags \
-    -ea:jolie... -ea:joliex... \
-    -Djava.rmi.server.codebase=file://usr/lib/jolie/extensions/rmi.jar \
-    -cp /usr/lib/jolie/lib/libjolie.jar:/usr/lib/jolie/lib/automaton.jar:/usr/lib/jolie/lib/commons-text.jar:/usr/lib/jolie/lib/jolie-js.jar:/usr/lib/jolie/lib/json-simple.jar:/usr/lib/jolie/jolie.jar:/usr/lib/jolie/jolie-cli.jar \
-    jolie.Jolie \
-    -l ./lib/*:/usr/lib/jolie/lib:/usr/lib/jolie/javaServices/*:/usr/lib/jolie/extensions/* \
-    -i /usr/lib/jolie/include \
-    -p /usr/lib/jolie/packages \
-    benchmark/server.ol > /tmp/benchmark_server.log 2>&1 &
-
-# Run benchmark WITH TQuery (2 clients, 5 requests each)
-python3 benchmark/test.py 2 5 true
-
-# Run benchmark WITHOUT TQuery
-python3 benchmark/test.py 2 5 false
-
-# Check GC statistics
-grep -E "GC\([0-9]+\)" /tmp/gc.log | tail -10
 ```
+======================================================================
+BENCHMARK SUMMARY
+======================================================================
+Metric               WITHOUT TQuery       WITH TQuery          JsonPath
+----------------------------------------------------------------------
+P50 (ms)             335                  3886                 190
+P95 (ms)             339                  3909                 237
+Max Heap (MB)        134.0                3917.1               5.4
+Young GC             6                    35                   1
+Full GC              0                    1                    0
+======================================================================
+```
+
+**Java Heap Memory Structure:**
+
+The heap is divided into generational spaces based on object lifetime:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                         Java Heap                           │
+├──────────────────────────────────┬──────────────────────────┤
+│        Young Generation          │    Old Generation        │
+├───────────┬───────────┬──────────┤                          │
+│   Eden    │ Survivor0 │ Survivor1│         Old              │
+│           │   (S0)    │   (S1)   │                          │
+└───────────┴───────────┴──────────┴──────────────────────────┘
+```
+
+- **Eden**: Where new objects are allocated. Most objects die young (short-lived)
+- **Survivor0 & Survivor1 (S0/S1)**: Objects that survive one minor GC move here. Only one survivor space is active at a time
+- **Old Generation**: Long-lived objects promoted after surviving multiple GCs. Collected less frequently (major GC = expensive)
+
+**Max Heap (MB) shows:** Total heap usage = S0 + S1 + Eden + Old (excludes Metaspace which stores class metadata)
 
 ### Command Explanations
 
 **Java Command Breakdown:**
 ```bash
-java -Xmx500m -Xms500m \
-    -Xlog:gc*:file=/tmp/gc.log:time,uptime,level,tags \
-    -ea:jolie... -ea:joliex... \
-    -Djava.rmi.server.codebase=file://usr/lib/jolie/extensions/rmi.jar \
+java -Xlog:gc*:file=/tmp/gc.log:time,uptime,level,tags \
     -cp /usr/lib/jolie/lib/libjolie.jar:... \
     jolie.Jolie \
     -l ./lib/*:... \
@@ -689,85 +729,92 @@ java -Xmx500m -Xms500m \
     benchmark/server.ol
 ```
 
-- `-Xmx500m`: Maximum heap size = 500 MB. Limits how much memory the JVM can allocate for the heap.
-- `-Xms500m`: Initial heap size = 500 MB. Preallocates memory at startup to avoid resizing during execution.
-- `-Xlog:gc*:file=/tmp/gc.log:time,uptime,level,tags`: Enables detailed garbage collection logging. All GC events are written to `/tmp/gc.log` with timestamps, uptime, log level, and component tags.
-- `-ea:jolie...`: Enables Java assertions for packages matching "jolie*". Assertions are runtime checks used for debugging and validation.
-- `-Djava.rmi.server.codebase=file://usr/lib/jolie/extensions/rmi.jar`: Sets a JVM system property. RMI (Remote Method Invocation) uses this to locate classes for remote objects.
-- `-cp /usr/lib/jolie/lib/...`: Java classpath. Specifies where to find compiled Java classes and JAR libraries. Lists all JAR files needed to run Jolie (libjolie.jar, automaton.jar, jolie.jar, etc.).
-- `jolie.Jolie`: The fully-qualified name of the main Java class to execute (equivalent to `public static void main` entry point).
+**Performance monitoring:**
+- `-Xlog:gc*:file=/tmp/gc.log:time,uptime,level,tags`: Detailed GC logging
+- Use `jstat` (JDK tool) for GC statistics: `jstat -gcutil <pid>` or `jstat -gccause <pid>`
+
+**Optional (for testing memory pressure):**
+- `-Xmx500m`: Maximum heap size = 500 MB
+- `-Xms500m`: Initial heap size = 500 MB
+
+**Runtime:**
+- `-cp /usr/lib/jolie/lib/...`: Java classpath. Specifies where to find compiled Java classes and JAR libraries.
+- `jolie.Jolie`: The fully-qualified name of the main Java class to execute.
 - `-l ./lib/*:...`: Jolie library paths. Tells Jolie where to find additional libraries and extensions.
-- `-i /usr/lib/jolie/include`: Jolie include directory. Where Jolie looks for `.iol` interface files and other includes.
+- `-i /usr/lib/jolie/include`: Jolie include directory. Where Jolie looks for `.iol` interface files.
 - `-p /usr/lib/jolie/packages`: Jolie packages directory. Where Jolie looks for installed packages (e.g., `@jolie/tquery`).
 - `benchmark/server.ol`: The Jolie source file to execute.
 
-**GC Log Grep Command:**
-```bash
-grep -E "GC\([0-9]+\)" /tmp/gc.log | tail -10
-```
+**GC Statistics with jstat:**
 
-This captures all lines containing "GC(N)" where N is a number, which are the main GC event summary lines. Example output:
-```
-[timestamp][info][gc] GC(280) Pause Full (G1 Compaction Pause) 499M->250M(500M) 60.651ms
-                      ^^^^^^^ ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ ^^^^^^^^^^^^^^^^ ^^^^^^^^
-                      Event#  GC type                          Before->After    Duration
-```
+The benchmark script uses `jstat` (JDK built-in tool) to extract GC statistics automatically. It shows:
+- `jstat -gcutil <pid>`: Heap utilization percentages (S0, S1, Eden, Old, Metaspace), GC counts, and GC time
+- `jstat -gccause <pid>`: Same as above plus the cause of the last GC event
 
-The format shows: `<heap before GC> -> <heap after GC> (<total heap size>) <pause time>`
+Raw GC logs are available in `/tmp/gc.log` for detailed manual analysis if needed.
 
-## Results
+## Metrics Explained
 
-**Note on percentiles**: Percentiles indicate response time thresholds. For example:
+**Latency Percentiles**:
 - **P50 (median)**: 50% of requests completed faster than this time
 - **P95**: 95% of requests completed faster than this time (only 5% were slower)
-- **P99**: 99% of requests completed faster than this time (only 1% were slower)
 
-### WITHOUT TQuery (500MB heap)
+**Memory & GC**:
+- **Max Heap (MB)**: Maximum heap memory used (S0 + S1 + Eden + Old Generation)
+- **Young GC**: Minor garbage collection count (short-lived objects)
+- **Full GC**: Major garbage collection count (entire heap, expensive)
 
-```
-Configuration:
-  - Mode: WITHOUT TQuery
-  - Concurrent clients: 2
-  - Requests per client: 5
-  - Total requests: 10
-  - Errors: 0
+## Benchmark Results
 
-Timing Statistics (milliseconds):
-  - Min:  38ms
-  - Max:  130ms
-  - Avg:  95ms
-  - P50:  96ms
-  - P95:  130ms
-  - P99:  130ms
-
-Performance:
-  - Total time: 484ms
-  - Throughput: 20.66 req/sec
-```
-
-### WITH TQuery (500MB heap)
+### Test 1: 5 parallel requests
 
 ```
-Status: TIMEOUT - Requests exceed 120s timeout
-Reason: TQuery creates large intermediate unwound data structures that
-        cause extensive garbage collection activity with limited heap
-
-The TQuery approach exhausts the 500MB heap due to:
-1. Unwinding 4,800 projects to deepest level creates many intermediate objects
-2. Each unwound record preserves full path context (companies → departments → teams → projects)
-3. Heap fills up faster than GC can reclaim memory
-4. Server enters GC thrashing (spending more time in GC than processing)
+======================================================================
+BENCHMARK SUMMARY
+======================================================================
+Metric               WITHOUT TQuery       WITH TQuery          JsonPath
+----------------------------------------------------------------------
+P50 (ms)             335                  3886                 190
+P95 (ms)             339                  3909                 237
+Max Heap (MB)        134.0                3917.1               5.4
+Young GC             6                    35                   1
+Full GC              0                    1                    0
+======================================================================
 ```
 
-### Memory Usage Analysis (500MB heap)
+### Test 2: 7 parallel requests
 
 ```
-GC Statistics during TQuery execution (from /tmp/gc.log):
-[2025-10-10T18:34:10.229+0200][127.747s][info][gc             ]
-  GC(230) Pause Full (G1 Compaction Pause) 499M->251M(500M) 56.235ms
-
-Peak heap usage: 499 MB (99.8% of 500 MB heap)
-GC events: 230+ Full GC events before timeout
-GC pause duration: 56.235ms per Full GC
-Status: Heap exhaustion - continuous Full GC cycles unable to free enough memory
+======================================================================
+BENCHMARK SUMMARY
+======================================================================
+Metric               WITHOUT TQuery       WITH TQuery          JsonPath
+----------------------------------------------------------------------
+P50 (ms)             356                  5242                 284
+P95 (ms)             366                  5269                 364
+Max Heap (MB)        141.6                3919.1               5.4
+Young GC             6                    42                   1
+Full GC              0                    2                    0
+======================================================================
 ```
+
+## Simple JsonPath Example
+
+**Purpose**: Demonstrates JsonPath's ability to filter on fields that belong to non-overlapping trees in a single query.
+
+**Files**:
+- `test_data.json`: 2 entries, each with two nested trees (tree1: person data, tree2: product data)
+- `TestFilter.java`: Simple program with two JsonPath filters
+
+**How to run**:
+```bash
+cd benchmark && gradle run -PmainClass=TestFilter
+```
+
+**What it does**:
+- **Filter 1**: `age > 28 && price > 1000` → matches Alice/Laptop
+- **Filter 2**: `age < 28 && price < 1000` → matches Bob/Phone
+
+This example shows how JsonPath can combine conditions across different nested structures (`tree1.details.age` and `tree2.specs.price`) in a single declarative query.
+
+Can `Tquery` achieve this?

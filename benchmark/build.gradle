@@ -1,0 +1,31 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+sourceCompatibility = 21
+targetCompatibility = 21
+
+compileJava {
+    options.compilerArgs << '-source' << '21' << '-target' << '21'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation 'com.jayway.jsonpath:json-path:2.9.0'
+}
+
+mainClassName = project.hasProperty('mainClass') ? project.property('mainClass') : 'JsonPathBenchmark'
+
+run {
+    args = project.hasProperty('n') ? [project.property('n'), 'large_data.json'] : ['10', 'large_data.json']
+}
+
+task printResults(type: JavaExec) {
+    classpath = sourceSets.main.runtimeClasspath
+    main = 'PrintResults'
+    args = ['in_progress', 'Python']
+}

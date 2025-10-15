@@ -1,0 +1,36 @@
+{
+  "entries": [
+    {
+      "tree1": {
+        "name": "Alice",
+        "details": {
+          "age": 30,
+          "city": "NYC"
+        }
+      },
+      "tree2": {
+        "product": "Laptop",
+        "specs": {
+          "price": 1200,
+          "brand": "Dell"
+        }
+      }
+    },
+    {
+      "tree1": {
+        "name": "Bob",
+        "details": {
+          "age": 25,
+          "city": "LA"
+        }
+      },
+      "tree2": {
+        "product": "Phone",
+        "specs": {
+          "price": 800,
+          "brand": "Apple"
+        }
+      }
+    }
+  ]
+}
