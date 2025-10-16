@@ -30,15 +30,11 @@ service FilterServer {
     main {
         filterProjects(request)(response) {
             if (request.useTQuery) {
-                // WITH TQUERY: One unwind + one match
-                unwind@TQuery({
-                    data << global.data
-                    query = "companies.company.departments.teams.projects.technologies"
-                })(unwoundTechs);
+                // WITH TQUERY: Pipeline with unwind + match + project
+                ps[0].unwindQuery = "companies.company.departments.teams.projects.technologies";
 
-                match@TQuery({
-                    data << unwoundTechs.result
-                    query.and << {
+                ps[1] << {
+                    matchQuery.and << {
                         left.equal << {
                             path = "companies.company.departments.teams.projects.status"
                             data = request.status
@@ -48,22 +44,42 @@ service FilterServer {
                             data = request.technology
                         }
                     }
+                };
+
+                ps[2] << {
+                    projectQuery[0] << {
+                        dstPath = "project_id"
+                        value.path = "companies.company.departments.teams.projects.project_id"
+                    }
+                    projectQuery[1] << {
+                        dstPath = "name"
+                        value.path = "companies.company.departments.teams.projects.name"
+                    }
+                    projectQuery[2] << {
+                        dstPath = "status"
+                        value.path = "companies.company.departments.teams.projects.status"
+                    }
+                    projectQuery[3] << {
+                        dstPath = "budget"
+                        value.path = "companies.company.departments.teams.projects.budget"
+                    }
+                    projectQuery[4] << {
+                        dstPath = "start_date"
+                        value.path = "companies.company.departments.teams.projects.start_date"
+                    }
+                    projectQuery[5] << {
+                        dstPath = "technologies"
+                        value.path = "companies.company.departments.teams.projects.technologies"
+                    }
+                };
+
+                pipeline@TQuery({
+                    data << global.data
+                    pipeline << ps
                 })(filtered);
 
                 response.count = #filtered.result;
-                for (i = 0, i < #filtered.result, i++) {
-                    proj -> filtered.result[i].companies.company.departments.teams.projects;
-                    response.results[i] << {
-                        project_id = proj.project_id
-                        name = proj.name
-                        status = proj.status
-                        budget = proj.budget
-                        start_date = proj.start_date
-                    };
-                    for (t = 0, t < #proj.technologies, t++) {
-                        response.results[i].technologies[t] = proj.technologies[t]
-                    }
-                }
+                response.results << filtered.result
             } else {
                 // WITHOUT TQUERY: Nested loops
                 resultCount = 0;

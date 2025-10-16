@@ -820,4 +820,286 @@ cd benchmark && gradle run -PmainClass=TestFilter
 
 This example shows how JsonPath can combine conditions across different nested structures (`tree1.details.age` and `tree2.specs.price`) in a single declarative query.
 
+### Example 2: Non-overlapping Trees with Array Fields
+
+**Purpose**: Shows how JsonPath checks if specific values exist in arrays from different nested structures.
+
+**Files**:
+- `test_arrays_data.json`: 2 entries, each with two nested trees containing arrays (tree1: person skills, tree2: project technologies)
+- `TestArrayFilter.java`: Program demonstrating array membership filters
+
+**How to run**:
+```bash
+cd benchmark && gradle run -PmainClass=TestArrayFilter
+```
+
+**What it does**:
+- **Filter 1**: `"Java" in skills && "Spring" in technologies` → matches Alice/ProjectX
+- **Filter 2**: `"Go" in skills && "Docker" in technologies` → matches Bob/ProjectY
+- **Filter 3**: `"Java" in skills && budget > 40000` → matches Alice/ProjectX (array + numeric)
+
+This example shows how JsonPath can combine array membership checks (`'Java' in @.tree1.info.skills`) with other conditions from different nested structures.
+
 Can `Tquery` achieve this?
+
+## Known Issue: TQuery Unwind Loses Array Data
+
+**Example difference between TQuery pipeline vs Manual implementation:**
+
+```
+TQuery result:
+{
+  "technologies": ["JavaScript"],
+  "project_id": "P9201002",
+  "name": "Framework260",
+  "status": "in_progress",
+  "budget": 711320,
+  "start_date": "2024-02-01"
+}
+
+Manual result:
+{
+  "technologies": ["Java", "JavaScript", "Swift", "TypeScript"],
+  "project_id": "P9201002",
+  "name": "Framework260",
+  "status": "in_progress",
+  "budget": 711320,
+  "start_date": "2024-02-01"
+}
+```
+
+TQuery's `unwind` operator creates separate records for each technology, so after projection only the matched technology remains in the array.
+
+
+## NEW PRIMITIVE PROPOSAL - example
+
+```jolie
+from @jolie.tquery.main import TQuery
+from file import File
+from console import Console
+
+service FilterExample {
+    embed TQuery as TQuery
+    embed File as File
+    embed Console as Console
+
+    main {
+        // Load data
+        readFile@File({
+            filename = "test_data.json"
+            format = "json"
+        })(data);
+
+        // Manual filtering (no TQuery can help here)
+        resultCount = 0;
+        for (i = 0, i < #data.entries, i++) {
+            entry -> data.entries[i];
+
+            // Check both conditions from different trees
+            if (entry.tree1.details.age > 28 &&
+                entry.tree2.specs.price > 1000) {
+                results[resultCount++] << entry
+            }
+        };
+
+        println@Console("Found " + resultCount + " results")()
+    }
+}
+```
+
+### Jolie - With Proposed SELECT WHERE
+
+```jolie
+from @jolie.tquery.main import TQuery
+from file import File
+from console import Console
+
+service FilterExample {
+    embed TQuery as TQuery
+    embed File as File
+    embed Console as Console
+
+    main {
+        // Load data
+        readFile@File({
+            filename = "test_data.json"
+            format = "json"
+        })(data);
+
+        // Use SELECT WHERE - can filter across non-overlapping trees
+        select@TQuery({
+            data << data
+            from = "$.entries"
+            where << {
+                and[0] << {
+                    field = "tree1.details.age"
+                    op = "gt"
+                    value = 28
+                }
+                and[1] << {
+                    field = "tree2.specs.price"
+                    op = "gt"
+                    value = 1000
+                }
+            }
+        })(filtered);
+
+        println@Console("Found " + filtered.count + " results")()
+    }
+}
+```
+
+=======================
+
+```jolie
+from @jolie.tquery.main import TQuery
+from file import File
+from console import Console
+
+service ArrayFilterExample {
+    embed TQuery as TQuery
+    embed File as File
+    embed Console as Console
+
+    main {
+        // Load data
+        readFile@File({
+            filename = "test_arrays_data.json"
+            format = "json"
+        })(data);
+
+        // Manual filtering with array checks
+        resultCount = 0;
+        for (i = 0, i < #data.entries, i++) {
+            entry -> data.entries[i];
+
+            // Check if "Java" in skills array
+            hasJava = false;
+            for (j = 0, j < #entry.tree1.info.skills, j++) {
+                if (entry.tree1.info.skills[j] == "Java") {
+                    hasJava = true;
+                    break
+                }
+            };
+
+            // Check if "Spring" in technologies array
+            hasSpring = false;
+            for (k = 0, k < #entry.tree2.details.technologies, k++) {
+                if (entry.tree2.details.technologies[k] == "Spring") {
+                    hasSpring = true;
+                    break
+                }
+            };
+
+            // Both conditions must be true
+            if (hasJava && hasSpring) {
+                results[resultCount++] << entry
+            }
+        };
+
+        println@Console("Found " + resultCount + " results")()
+    }
+}
+```
+
+### Jolie - With Proposed SELECT WHERE
+
+```jolie
+from @jolie.tquery.main import TQuery
+from file import File
+from console import Console
+
+service ArrayFilterExample {
+    embed TQuery as TQuery
+    embed File as File
+    embed Console as Console
+
+    main {
+        // Load data
+        readFile@File({
+            filename = "test_arrays_data.json"
+            format = "json"
+        })(data);
+
+        // Use SELECT WHERE with "in" operator for array membership
+        select@TQuery({
+            data << data
+            from = "$.entries"
+            where << {
+                and[0] << {
+                    field = "tree1.info.skills"
+                    op = "in"
+                    value = "Java"
+                }
+                and[1] << {
+                    field = "tree2.details.technologies"
+                    op = "in"
+                    value = "Spring"
+                }
+            }
+        })(filtered);
+
+        println@Console("Found " + filtered.count + " results")();
+
+        // Access results
+        for (i = 0, i < #filtered.result, i++) {
+            println@Console(
+                "Person: " + filtered.result[i].tree1.person +
+                ", Project: " + filtered.result[i].tree2.project
+            )()
+        }
+    }
+}
+```
+
+=======================================
+
+## Comparison: Before vs After
+
+### Before (Current TQuery)
+
+```jolie
+// Multiple operations needed
+unwind@TQuery({
+    data << projectData
+    query = "companies.company.departments.teams.projects.technologies"
+})(unwound);
+
+match@TQuery({
+    data << unwound.result
+    query.and << {
+        left.equal << {
+            path = "companies.company.departments.teams.projects.status"
+            data = "in_progress"
+        }
+        right.equal << {
+            path = "companies.company.departments.teams.projects.technologies"
+            data = "Python"
+        }
+    }
+})(filtered);
+```
+
+### After (SELECT WHERE)
+(`[*]` vs `[n]`)
+
+```jolie
+// Single declarative operation
+select@TQuery({
+    data << projectData
+    from = "$.companies[*].company.departments[*].teams[*].projects[*]"
+    where << {
+        and[0] << {
+            field = "status"
+            op = "eq"
+            value = "in_progress"
+        }
+        and[1] << {
+            field = "technologies"
+            op = "in"
+            value = "Python"
+        }
+    }
+})(filtered);
+```
+
