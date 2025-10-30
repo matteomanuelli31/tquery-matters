@@ -1119,3 +1119,83 @@ select@TQuery({
 })(filtered);
 ```
 
+---
+
+## JSONPath: Two Powerful Syntaxes for Recursive Descent Filtering
+
+JSONPath provides **two complementary syntaxes** for querying data at any depth in non-homogeneous structures:
+
+### 1. `$..[?(@.field == value)]` - Find Objects at Any Level
+
+Searches recursively through **all levels** and returns **objects** where the field equals value at that object's direct level.
+
+```java
+// Find all objects where field 'd' equals 5, regardless of nesting depth
+List<Map<String, Object>> results = JsonPath.read(data, "$..[?(@.d == 5)]");
+```
+
+**Example Data:**
+```json
+{
+  "items": [
+    {"id": 1, "d": 5, "x": {"e": 10}},
+    {"id": 2, "e": 10, "y": {"d": 5}},
+    {"id": 3, "d": 5}
+  ]
+}
+```
+
+**Query:** `$..[?(@.d == 5)]`
+
+**Returns:** 4 objects
+- `items[0]` (has `d: 5`)
+- `items[0].x` (doesn't have `d`, so not matched)
+- `items[1].y` (has `d: 5`)
+- `items[2]` (has `d: 5`)
+
+### 2. `$.items[?(value in @..field)]` - Find Items Containing Value Anywhere
+
+Returns **items** where the value exists **anywhere in the descendant tree**.
+
+```java
+// Find items where value 5 exists anywhere in descendant field 'd'
+List<Map<String, Object>> results = JsonPath.read(data, "$.items[?(5 in @..d)]");
+```
+
+**Using same data as above:**
+
+**Query:** `$.items[?(5 in @..d)]`
+
+**Returns:** 3 items (the top-level items that contain `d=5` somewhere in their tree)
+- `items[0]` (has `d: 5` at its level)
+- `items[1]` (has `d: 5` in nested `y`)
+- `items[2]` (has `d: 5` at its level)
+
+### Key Difference
+
+- **`$..[?(@.d == 5)]`** → "Search at **any level**, return **objects** where field `d` equals 5 at that object's direct level"
+- **`$.items[?(5 in @..d)]`** → "Find **items** where value 5 exists **anywhere** in descendant field `d`"
+
+### Multiple AND Conditions
+
+Both syntaxes support AND conditions:
+
+```java
+// Descendant filter with AND
+$..[?(@.d == 5 && @.e == 10)]  // Objects with both d==5 AND e==10 at same level
+
+// Value-in-descendants with AND
+$.items[?(5 in @..d && 10 in @..e)]  // Items containing both values anywhere in tree
+```
+
+Both syntaxes work natively in Jayway JSONPath without custom wrappers!
+
+### Running JSONPath Tests
+
+```bash
+cd benchmark
+gradle run -PmainClass=RunTests
+```
+
+All tests demonstrate JSONPath's powerful capabilities for querying complex, non-homogeneous data structures.
+
