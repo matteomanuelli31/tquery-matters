@@ -3,8 +3,7 @@ import java.util.List;
 public class SelectWildcardTest {
 	public static void main( String[] args ) {
 		// Create test structure
-		Value root = Value.create();
-		Value a = root.getChildren( "a" ).first();
+		Value a = Value.create();
 
 		// a.b[0] = "ciao"
 		a.getChildren( "b" ).get( 0 ).setValue( "ciao" );
@@ -18,12 +17,12 @@ public class SelectWildcardTest {
 		System.out.println( "  a.b[1] = " + a.getChildren( "b" ).get( 1 ).strValue() );
 		System.out.println( "  a.c[0] = " + a.getChildren( "c" ).first().strValue() );
 
-		// Test 1: $.a.* where . = ciao (should return field names)
-		System.out.println( "\n=== Test 1: $.a.* WHERE . = ciao ===" );
+		// Test 1: $.* FROM a WHERE . = ciao (should return field names)
+		System.out.println( "\n=== Test 1: $.* WHERE . = ciao ===" );
 		System.out.println( "Expected: [a.b, a.c] - field names where ANY element = ciao" );
 		List< String > results1 = new SelectBuilder()
-			.select( "a.*" )
-			.from( root )
+			.select( "$.*" )
+			.from( a, "a" )
 			.where( ". = ciao" )
 			.exec();
 
@@ -37,12 +36,12 @@ public class SelectWildcardTest {
 			results1.contains( "a.c" );
 		System.out.println( test1 ? "✓ Test 1 PASSED" : "✗ Test 1 FAILED" );
 
-		// Test 2: $.a.*[*] where . = ciao (should return specific array indices)
-		System.out.println( "\n=== Test 2: $.a.*[*] WHERE . = ciao ===" );
+		// Test 2: $.*[*] FROM a where . = ciao (should return specific array indices)
+		System.out.println( "\n=== Test 2: $.*[*] WHERE . = ciao ===" );
 		System.out.println( "Expected: [a.b[0], a.c[0]] - specific indices that = ciao" );
 		List< String > results2 = new SelectBuilder()
-			.select( "a.*[*]" )
-			.from( root )
+			.select( "$.*[*]" )
+			.from( a, "a" )
 			.where( ". = ciao" )
 			.exec();
 
@@ -56,12 +55,12 @@ public class SelectWildcardTest {
 			results2.contains( "a.c[0]" );
 		System.out.println( test2 ? "✓ Test 2 PASSED" : "✗ Test 2 FAILED" );
 
-		// Test 3: $.a.*[*] where . = hello
-		System.out.println( "\n=== Test 3: $.a.*[*] WHERE . = hello ===" );
+		// Test 3: $.*[*] FROM a where . = hello
+		System.out.println( "\n=== Test 3: $.*[*] WHERE . = hello ===" );
 		System.out.println( "Expected: [a.b[1]] - only b[1] = hello" );
 		List< String > results3 = new SelectBuilder()
-			.select( "a.*[*]" )
-			.from( root )
+			.select( "$.*[*]" )
+			.from( a, "a" )
 			.where( ". = hello" )
 			.exec();
 

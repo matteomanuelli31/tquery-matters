@@ -6,10 +6,7 @@ public class SelectTest {
 		// a.b.c.d.e = 5
 		// a.b.e = 5
 
-		Value root = Value.create();
-
-		// a.b.c.d.e = 5
-		Value a = root.getChildren( "a" ).first();
+		Value a = Value.create();
 		Value b = a.getChildren( "b" ).first();
 		Value c = b.getChildren( "c" ).first();
 		Value d = c.getChildren( "d" ).first();
@@ -19,21 +16,18 @@ public class SelectTest {
 		b.getChildren( "e" ).first().setValue( 5 );
 
 		// Verify structure
-		System.out.println( "a.b.c.d.e = " + root.getChildren( "a" ).first()
-			.getChildren( "b" ).first()
+		System.out.println( "a.b.c.d.e = " + a.getChildren( "b" ).first()
 			.getChildren( "c" ).first()
 			.getChildren( "d" ).first()
 			.getChildren( "e" ).first().intValue() );
 
-		System.out.println( "a.b.e = " + root.getChildren( "a" ).first()
-			.getChildren( "b" ).first()
+		System.out.println( "a.b.e = " + a.getChildren( "b" ).first()
 			.getChildren( "e" ).first().intValue() );
 
-		// Execute SELECT query: select $.a.b.* from root where ..e = 5
-		// $ stands for root
+		// Execute SELECT query: select $.b.* from a where ..e = 5
 		List< String > results = new SelectBuilder()
-			.select( "a.b.*" )
-			.from( root )
+			.select( "$.b.*" )
+			.from( a, "a" )
 			.where( "..e = 5" )
 			.exec();
 

@@ -1,231 +1,311 @@
+import generated.*;
+import org.antlr.v4.runtime.*;
 import java.util.*;
 
 /**
- * SELECT query builder for Jolie trees.
+ * SELECT query builder using ANTLR4 parser.
  * Core: everything is an array (a.b = a.b[0])
  */
 public class SelectBuilder {
-        private String pattern;
+        private String selectQuery;
         private Value tree;
-        private String where = "";
-        private List<String> results = new ArrayList<>();
+        private String whereQuery = "";
+        private String rootPath = "";
 
-        public SelectBuilder select( String pattern ) {
-                this.pattern = pattern;
+        public SelectBuilder select( String query ) {
+                this.selectQuery = query;
                 return this;
         }
 
-        public SelectBuilder from( Value tree ) {
+        public SelectBuilder from( Value tree, String path ) {
                 this.tree = tree;
+                this.rootPath = path;
                 return this;
         }
 
-        public SelectBuilder where( String condition ) {
-                this.where = condition;
+        public SelectBuilder where( String query ) {
+                this.whereQuery = query;
                 return this;
         }
 
         public List<String> exec() {
                 Objects.requireNonNull( tree );
-                Objects.requireNonNull( pattern );
+                Objects.requireNonNull( selectQuery );
 
-                final String[] tokens = tokenize( pattern );
-                navigate( tree, tokens, "" );
-                return results;
+                // Parse the query string into ANTLR parse tree
+                final CharStream input = CharStreams.fromString( selectQuery );
+                final SelectQueryLexer lexer = new SelectQueryLexer( input );
+                final CommonTokenStream tokenStream = new CommonTokenStream( lexer );
+                final SelectQueryParser parser = new SelectQueryParser( tokenStream );
+
+                // Get the root of the parse tree (corresponds to 'pattern' grammar rule)
+                final SelectQueryParser.PatternContext parseTree = parser.pattern();
+
+                // Visit the parse tree to execute the query
+                // visit() dispatches to visitPattern() automatically
+                return new QueryVisitor( tree, whereQuery, rootPath ).visit( parseTree );
         }
 
-        // Tokenize pattern preserving ".." as prefix
-        private String[] tokenize( String pattern ) {
-                // Split on single dots but preserve ".." as part of the token
-                return pattern.split( "(?<!\\.)\\." + "(?!\\.)" );
-        }
+        private static class QueryVisitor extends SelectQueryBaseVisitor<List<String>> {
+                private final Value root;
+                private final String whereQuery;
+                private final String rootPath;
+                private final List<String> results = new ArrayList<>();
 
-        // ========== NAVIGATE ==========
+                public QueryVisitor( Value root, String whereQuery, String rootPath ) {
+                        this.root = root;
+                        this.whereQuery = whereQuery;
+                        this.rootPath = rootPath;
+                }
 
-        private void navigate( Value node, String[] tokens, String path ) {
-                if( tokens.length == 0 ) return;
+                @Override
+                public List<String> visitPattern( SelectQueryParser.PatternContext ctx ) {
+                        final List<SelectQueryParser.SegmentContext> segments = ctx.segment();
+                        // $ is mandatory, so always start with rootPath
+                        navigate( root, segments, rootPath );
+                        return results;
+                }
 
-                final String currToken = tokens[0];
-                final String[] otherTokens = Arrays.copyOfRange( tokens, 1, tokens.length );
+                private void navigate( Value node, List<SelectQueryParser.SegmentContext> segments, String path ) {
+                        if( segments.isEmpty() ) return;
 
-                if( "*[*]".equals( currToken ) ) {
-                        node.children().forEach( (fieldName, fieldArray) -> {
-                                final String fieldPath = path( path, fieldName );
-                                array( fieldArray, fieldPath, otherTokens );
-                        });
+                        final SelectQueryParser.SegmentContext currSegment = segments.get( 0 );
+                        final List<SelectQueryParser.SegmentContext> otherSegments = segments.subList( 1, segments.size() );
 
-                } else if( "*".equals( currToken ) ) {
-                        node.children().forEach( (fieldName, fieldArray) -> {
-                                final String fieldPath = path( path, fieldName );
+                        switch( currSegment ) {
+                                case SelectQueryParser.DescendantArraySegmentContext descendantArray -> {
+                                        final String fieldName = descendantArray.ID().getText();
+                                        final boolean searchAllArrElems = true;
+                                        searchDescendant( node, fieldName, path, otherSegments, searchAllArrElems );
+                                }
 
-                                if( otherTokens.length == 0 ) {
-                                        if( !fieldArray.isEmpty() && test( fieldArray.first(), fieldName ) ) {
-                                                results.add( fieldPath );
+                                case SelectQueryParser.DescendantSegmentContext descendant -> {
+                                        final String fieldName = descendant.ID().getText();
+                                        final boolean searchAllArrElems = false;
+                                        searchDescendant( node, fieldName, path, otherSegments, searchAllArrElems );
+                                }
+
+                                case SelectQueryParser.DotSegmentContext dotSeg -> {
+                                        final SelectQueryParser.TokenContext token = dotSeg.token();
+                                        switch( token ) {
+                                                case SelectQueryParser.WildcardArrayContext wildcardArray -> {
+                                                        node.children().forEach( (fieldName, fieldArray) -> {
+                                                                final String fieldPath = buildPath( path, fieldName );
+                                                                array( fieldArray, fieldPath, otherSegments );
+                                                        });
+                                                }
+
+                                                case SelectQueryParser.WildcardContext wildcard -> {
+                                                        node.children().forEach( (fieldName, fieldArray) -> {
+                                                                if( fieldArray.isEmpty() ) return;
+
+                                                                final String fieldPath = buildPath( path, fieldName );
+                                                                final Value firstElement = fieldArray.first();
+                                                                processElementOrNavigate( firstElement, fieldPath, fieldName, otherSegments );
+                                                        });
+                                                }
+
+                                                case SelectQueryParser.FieldArrayContext fieldArray -> {
+                                                        final String fieldName = fieldArray.ID().getText();
+                                                        if( !node.hasChildren( fieldName ) ) return;
+
+                                                        final ValueVector fieldArrayVector = node.getChildren( fieldName );
+                                                        final String fieldPath = buildPath( path, fieldName );
+                                                        array( fieldArrayVector, fieldPath, otherSegments );
+                                                }
+
+                                                case SelectQueryParser.FieldContext field -> {
+                                                        final String fieldName = field.ID().getText();
+                                                        if( !node.hasChildren( fieldName ) ) return;
+
+                                                        final ValueVector fieldArray = node.getChildren( fieldName );
+                                                        if( fieldArray.isEmpty() ) return;
+
+                                                        final Value firstElement = fieldArray.first();
+                                                        final String fieldPath = buildPath( path, fieldName );
+                                                        processElementOrNavigate( firstElement, fieldPath, fieldName, otherSegments );
+                                                }
+
+                                                default -> throw new IllegalStateException( "Unexpected token type: " + token.getClass() );
                                         }
+                                }
+
+                                default -> throw new IllegalStateException( "Unexpected segment type: " + currSegment.getClass() );
+                        }
+                }
+
+                private void searchDescendant( Value node, String fieldName, String path,
+                                List<SelectQueryParser.SegmentContext> otherSegments, boolean searchAllArrElems ) {
+
+                        if( node.hasChildren( fieldName ) ) {
+                                final ValueVector fieldArray = node.getChildren( fieldName );
+                                final String fieldPath = buildPath( path, fieldName );
+                                final boolean hasMoreSegments = !otherSegments.isEmpty();
+
+                                if( searchAllArrElems || hasMoreSegments ) {
+                                        array( fieldArray, fieldPath, otherSegments );
                                 } else {
                                         if( !fieldArray.isEmpty() ) {
-                                                // a.b = a.b[0]
-                                                navigate( fieldArray.first(), otherTokens, fieldPath );
+                                                final Value firstElement = fieldArray.first();
+                                                testAndAddResult( firstElement, fieldPath, fieldName );
                                         }
                                 }
+                        }
+
+                        node.children().forEach( (childName, childArray) -> {
+                                if( !childArray.isEmpty() ) {
+                                        final Value firstChild = childArray.first();
+                                        final String childPath = buildPath( path, childName );
+                                        searchDescendant( firstChild, fieldName, childPath, otherSegments, searchAllArrElems );
+                                }
                         });
-
-                } else if( currToken.startsWith( ".." ) ) {
-                        // Descendant pattern: ..field finds all fields named "field" at any depth
-                        final String fieldName = currToken.substring( 2 );
-                        searchDescendant( node, fieldName, path, otherTokens );
-
-                } else if( currToken.endsWith( "[*]" ) ) {
-                        final String fieldName = currToken.replace( "[*]", "" );
-                        if( !node.hasChildren( fieldName ) ) return;
-
-                        final ValueVector fieldArray = node.getChildren( fieldName );
-                        final String fieldPath = path( path, fieldName );
-                        array( fieldArray, fieldPath, otherTokens );
-
-                } else {
-                        final String fieldName = currToken;
-                        if( !node.hasChildren( fieldName ) ) return;
-
-                        final ValueVector fieldArray = node.getChildren( fieldName );
-                        if( fieldArray.isEmpty() ) return;
-
-                        final Value firstElement = fieldArray.first();
-                        final String fieldPath = path( path, fieldName );
-                        navigate( firstElement, otherTokens, fieldPath );
                 }
-        }
 
-        private void searchDescendant( Value node, String fieldName, String path, String[] otherTokens ) {
-                if( node.hasChildren( fieldName ) ) {
-                        final ValueVector fieldArray = node.getChildren( fieldName );
-                        final String fieldPath = path( path, fieldName );
+                private void array( ValueVector arr, String arrayPath, List<SelectQueryParser.SegmentContext> otherSegments ) {
+                        for( int i = 0; i < arr.size(); i++ ) {
+                                final Value element = arr.get( i );
+                                final String elementPath = String.format( "%s[%d]", arrayPath, i );
+                                processElementOrNavigate( element, elementPath, "", otherSegments );
+                        }
+                }
 
-                        if( otherTokens.length == 0 ) {
-                                if( !fieldArray.isEmpty() && test( fieldArray.first(), fieldName ) ) {
-                                        results.add( fieldPath );
-                                }
+                // ========== HELPERS ==========
+
+                private void processElementOrNavigate( Value element, String elementPath, String fieldName,
+                                List<SelectQueryParser.SegmentContext> otherSegments ) {
+
+                        final boolean isLastToken = otherSegments.isEmpty();
+
+                        if( isLastToken ) {
+                                testAndAddResult( element, elementPath, fieldName );
                         } else {
-                                array( fieldArray, fieldPath, otherTokens );
+                                navigate( element, otherSegments, elementPath );
                         }
                 }
 
-                node.children().forEach( (childName, childArray) -> {
-                        if( !childArray.isEmpty() ) {
-                                final Value firstChild = childArray.first();
-                                final String childPath = path( path, childName );
-                                searchDescendant( firstChild, fieldName, childPath, otherTokens );
+                private void testAndAddResult( Value element, String elementPath, String fieldName ) {
+                        final boolean matches = test( element, fieldName );
+                        if( matches ) {
+                                results.add( elementPath );
                         }
-                });
-        }
+                }
 
-        private void array( ValueVector arr, String arrayPath, String[] otherTokens ) {
-                for( int i = 0; i < arr.size(); i++ ) {
-                        final Value element = arr.get( i );
-                        final String elementPath = String.format( "%s[%d]", arrayPath, i );
+                private String buildPath( String currentPath, String childName ) {
+                        return currentPath.isEmpty() ? childName : currentPath + "." + childName;
+                }
 
-                        if( otherTokens.length == 0 ) {
-                                // TODO a.b[n] in select query
-                                if( test( element, "" ) ) {
-                                        results.add( elementPath );
+                private boolean eq( Value value, String expected ) {
+                        try {
+                                if( value.isInt() ) {
+                                        final int actualValue = value.intValue();
+                                        final int expectedValue = Integer.parseInt( expected );
+                                        return actualValue == expectedValue;
                                 }
-                        } else {
-                                navigate( element, otherTokens, elementPath );
+                                if( value.isString() ) {
+                                        final String actualValue = value.strValue();
+                                        return actualValue.equals( expected );
+                                }
+                                if( value.isBool() ) {
+                                        final boolean actualValue = value.boolValue();
+                                        final boolean expectedValue = Boolean.parseBoolean( expected );
+                                        return actualValue == expectedValue;
+                                }
+                        } catch( NumberFormatException e ) {
+                                // Type mismatch
                         }
-                }
-        }
-
-        // ========== WHERE ==========
-
-        private boolean test( Value node, String nodeName ) {
-                final String condition = where.trim();
-                if( condition.isEmpty() ) return true;
-
-                if( condition.startsWith( ". = " ) ) {
-                        final String expected = condition.replaceFirst( "\\. = ", "" ).trim();
-                        return node.isDefined() && eq( node, expected );
+                        return false;
                 }
 
-                if( condition.endsWith( " in ." ) ) {
-                        final String fieldName = condition.replace( " in .", "" ).trim();
-                        return node.hasChildren( fieldName );
+                // ========== WHERE ==========
+
+                private boolean test( Value node, String nodeName ) {
+                        final String trimmedWhereQuery = whereQuery.trim();
+                        if( trimmedWhereQuery.isEmpty() ) return true;
+
+                        if( trimmedWhereQuery.startsWith( ". = " ) ) {
+                                final String expectedValue = trimmedWhereQuery.substring( 4 ).trim();
+                                return node.isDefined() && eq( node, expectedValue );
+                        }
+
+                        if( trimmedWhereQuery.endsWith( " in ." ) ) {
+                                final String fieldName = trimmedWhereQuery.replace( " in .", "" ).trim();
+                                return node.hasChildren( fieldName );
+                        }
+
+                        if( trimmedWhereQuery.startsWith( ".." ) ) {
+                                final String remainder = trimmedWhereQuery.substring( 2 );
+                                final String[] parts = remainder.split( "=", 2 );
+                                final String fieldPattern = parts[0].trim();
+                                final String expectedValue = parts[1].trim();
+
+                                // Check if field pattern includes [*] for array wildcard
+                                final boolean searchAllElements = fieldPattern.endsWith( "[*]" );
+                                final String fieldName = searchAllElements ?
+                                        fieldPattern.substring( 0, fieldPattern.length() - 3 ) :
+                                        fieldPattern;
+
+                                final boolean isDirectMatch = nodeName.equals( fieldName ) && node.isDefined() && eq( node, expectedValue );
+                                final boolean isDescendantMatch = desc( node, fieldName, expectedValue, searchAllElements );
+
+                                return isDirectMatch || isDescendantMatch;
+                        }
+
+                        if( trimmedWhereQuery.startsWith( "." ) ) {
+                                final String remainder = trimmedWhereQuery.substring( 1 );
+                                final String[] parts = remainder.split( "=", 2 );
+                                final String fieldPath = parts[0].trim();
+                                final String expectedValue = parts[1].trim();
+
+                                // Navigate through path like "b.c" or just "b"
+                                final String[] pathSegments = fieldPath.split( "\\." );
+                                Value current = node;
+
+                                for( String segment : pathSegments ) {
+                                        if( !current.hasChildren( segment ) ) return false;
+
+                                        final ValueVector fieldArray = current.getChildren( segment );
+                                        if( fieldArray.isEmpty() ) return false;
+
+                                        current = fieldArray.first();
+                                }
+
+                                return current.isDefined() && eq( current, expectedValue );
+                        }
+
+                        return true;
                 }
 
-                if( condition.startsWith( ".." ) ) {
-                        final String remainder = condition.replaceFirst( "\\.\\.", "" );
-                        final String[] parts = remainder.split( "=", 2 );
-                        final String fieldName = parts[0].trim();
-                        final String expectedValue = parts[1].trim();
-                        return nodeName.equals( fieldName ) && node.isDefined() && eq( node, expectedValue )
-                                || desc( node, fieldName, expectedValue );
-                }
-
-                if( condition.startsWith( "." ) ) {
-                        final String remainder = condition.replaceFirst( "\\.", "" );
-                        final String[] parts = remainder.split( "=", 2 );
-                        final String fieldName = parts[0].trim();
-                        final String expectedValue = parts[1].trim();
-
-                        if( !node.hasChildren( fieldName ) ) return false;
-
-                        final ValueVector fieldArray = node.getChildren( fieldName );
-                        if( fieldArray.isEmpty() ) return false;
-
-                        final Value child = fieldArray.first();
-                        return child.isDefined() && eq( child, expectedValue );
-                }
-
-                return true;
-        }
-
-        private boolean desc( Value node, String fieldName, String expectedValue ) {
-                if( node.hasChildren( fieldName ) ) {
-                        final ValueVector fieldArray = node.getChildren( fieldName );
-                        for( int i = 0; i < fieldArray.size(); i++ ) {
-                                final Value element = fieldArray.get( i );
-                                if( element.isDefined() && eq( element, expectedValue ) ) {
-                                        return true;
+                private boolean desc( Value node, String fieldName, String expectedValue, boolean searchAllElements ) {
+                        if( node.hasChildren( fieldName ) ) {
+                                final ValueVector fieldArray = node.getChildren( fieldName );
+                                if( searchAllElements ) {
+                                        // Check all array elements
+                                        for( int i = 0; i < fieldArray.size(); i++ ) {
+                                                final Value element = fieldArray.get( i );
+                                                if( element.isDefined() && eq( element, expectedValue ) ) {
+                                                        return true;
+                                                }
+                                        }
+                                } else {
+                                        // Check only first element (field[0])
+                                        if( !fieldArray.isEmpty() ) {
+                                                final Value element = fieldArray.first();
+                                                return element.isDefined() && eq( element, expectedValue );
+                                        }
                                 }
                         }
-                }
 
-                for( ValueVector childArray : node.children().values() ) {
-                        for( int i = 0; i < childArray.size(); i++ ) {
-                                final Value element = childArray.get( i );
-                                if( desc( element, fieldName, expectedValue ) ) {
-                                        return true;
+                        for( ValueVector childArray : node.children().values() ) {
+                                for( int i = 0; i < childArray.size(); i++ ) {
+                                        final Value element = childArray.get( i );
+                                        final boolean descendantMatches = desc( element, fieldName, expectedValue, searchAllElements );
+                                        if( descendantMatches ) {
+                                                return true;
+                                        }
                                 }
                         }
+
+                        return false;
                 }
-
-                return false;
-        }
-
-        // ========== HELPERS ==========
-
-        private String path( String current, String child ) {
-                return current.isEmpty() ? child : current + "." + child;
-        }
-
-        private boolean eq( Value value, String expected ) {
-                try {
-                        if( value.isInt() ) {
-                                final int actual = value.intValue();
-                                final int expectedInt = Integer.parseInt( expected );
-                                return actual == expectedInt;
-                        }
-                        if( value.isString() ) {
-                                final String actual = value.strValue();
-                                return actual.equals( expected );
-                        }
-                        if( value.isBool() ) {
-                                final boolean actual = value.boolValue();
-                                final boolean expectedBool = Boolean.parseBoolean( expected );
-                                return actual == expectedBool;
-                        }
-                } catch( NumberFormatException e ) {
-                        // Type mismatch
-                }
-                return false;
         }
 }

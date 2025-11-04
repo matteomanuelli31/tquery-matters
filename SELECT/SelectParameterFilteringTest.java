@@ -2,8 +2,7 @@ import java.util.List;
 
 public class SelectParameterFilteringTest {
 	public static void main( String[] args ) {
-		Value root = Value.create();
-		Value data = root.getChildren( "data" ).first();
+		Value data = Value.create();
 
 		// ===== PATH 0, METHOD 0 (GET) =====
 		// param[0]: { in: "query", name: "page", type: "integer" }
@@ -62,8 +61,8 @@ public class SelectParameterFilteringTest {
 		// Test 1: Group by .in field
 		System.out.println( "Test 1: SELECT WHERE .in = body" );
 		List< String > bodyParams = new SelectBuilder()
-			.select( "data.paths[*].methods[*].parameters[*]" )
-			.from( root )
+			.select( "$.paths[*].methods[*].parameters[*]" )
+			.from( data, "data" )
 			.where( ".in = body" )
 			.exec();
 		System.out.println( "  Result: " + bodyParams );
@@ -71,8 +70,8 @@ public class SelectParameterFilteringTest {
 
 		System.out.println( "\nTest 2: SELECT WHERE .in = path" );
 		List< String > pathParams = new SelectBuilder()
-			.select( "data.paths[*].methods[*].parameters[*]" )
-			.from( root )
+			.select( "$.paths[*].methods[*].parameters[*]" )
+			.from( data, "data" )
 			.where( ".in = path" )
 			.exec();
 		System.out.println( "  Result: " + pathParams );
@@ -80,8 +79,8 @@ public class SelectParameterFilteringTest {
 
 		System.out.println( "\nTest 3: SELECT WHERE .in = query" );
 		List< String > queryParams = new SelectBuilder()
-			.select( "data.paths[*].methods[*].parameters[*]" )
-			.from( root )
+			.select( "$.paths[*].methods[*].parameters[*]" )
+			.from( data, "data" )
 			.where( ".in = query" )
 			.exec();
 		System.out.println( "  Result: " + queryParams );
@@ -89,8 +88,8 @@ public class SelectParameterFilteringTest {
 
 		System.out.println( "\nTest 4: SELECT WHERE .in = header" );
 		List< String > headerParams = new SelectBuilder()
-			.select( "data.paths[*].methods[*].parameters[*]" )
-			.from( root )
+			.select( "$.paths[*].methods[*].parameters[*]" )
+			.from( data, "data" )
 			.where( ".in = header" )
 			.exec();
 		System.out.println( "  Result: " + headerParams );
@@ -99,8 +98,8 @@ public class SelectParameterFilteringTest {
 		// Test 5: Find params with 'schema' field (heterogeneous check)
 		System.out.println( "\nTest 5: SELECT WHERE schema in . (has schema field)" );
 		List< String > schemaParams = new SelectBuilder()
-			.select( "data.paths[*].methods[*].parameters[*]" )
-			.from( root )
+			.select( "$.paths[*].methods[*].parameters[*]" )
+			.from( data, "data" )
 			.where( "schema in ." )
 			.exec();
 		System.out.println( "  Result: " + schemaParams );
@@ -110,8 +109,8 @@ public class SelectParameterFilteringTest {
 		// Test 6: Find params with 'type' field
 		System.out.println( "\nTest 6: SELECT WHERE type in . (has type field)" );
 		List< String > typeParams = new SelectBuilder()
-			.select( "data.paths[*].methods[*].parameters[*]" )
-			.from( root )
+			.select( "$.paths[*].methods[*].parameters[*]" )
+			.from( data, "data" )
 			.where( "type in ." )
 			.exec();
 		System.out.println( "  Result: " + typeParams );
