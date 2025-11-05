@@ -1,15 +1,12 @@
 /*
- * ANTLR4 grammar for SELECT queries on Jolie trees
- *
- * Usage:
- *   antlr4 SelectQuery.g4
- *   javac SelectQuery*.java
+ * Simplified ANTLR4 grammar for SELECT queries
+ * Supports parentheses and NOT operator
  */
 
 grammar SelectQuery;
 
 // Parser rules
-pattern
+selectClause
     : '$' segment* EOF
     ;
 
@@ -26,9 +23,32 @@ token
     | ID                        # Field
     ;
 
+// WHERE clause with parentheses support
 whereClause
+    : orExpr
+    ;
+
+orExpr
+    : andExpr ('||' andExpr)*
+    ;
+
+andExpr
+    : notExpr ('&&' notExpr)*
+    ;
+
+notExpr
+    : '!' notExpr               # NotExpression
+    | primary                   # PrimaryExpression
+    ;
+
+primary
+    : '(' orExpr ')'            # ParenExpression
+    | condition                 # ConditionExpression
+    ;
+
+condition
     : '.' '=' value             # NodeValue
-    | ID 'in' '.'               # FieldExists
+    | wherePath 'in' '.'        # PathExists
     | wherePath '=' value       # PathMatch
     ;
 
@@ -37,7 +57,8 @@ wherePath
     ;
 
 wherePathSegment
-    : '..' ID                   # WhereDescendantSegment
+    : '..' ID '[*]'             # WhereDescendantArraySegment
+    | '..' ID                   # WhereDescendantSegment
     | '.' ID                    # WhereDirectSegment
     ;
 

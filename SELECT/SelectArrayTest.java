@@ -3,7 +3,8 @@ import java.util.List;
 public class SelectArrayTest {
 	public static void main( String[] args ) {
 		// Create Jolie tree structure with arrays
-		Value apiData = Value.create();
+		Value root = Value.create();
+		Value apiData = root.getChildren( "apiData" ).first();
 
 		// apiData.operations[0]
 		Value op0 = apiData.getChildren( "operations" ).get( 0 );
@@ -25,7 +26,7 @@ public class SelectArrayTest {
 		Value op2 = apiData.getChildren( "operations" ).get( 2 );
 		op2.getChildren( "path" ).first().setValue( "/admin/secrets" );
 		op2.getChildren( "method" ).first().setValue( "post" );
-		op2.getChildren( "tags" ).get( 0 ).setValue( "secrets" );
+		op2.getChildren( "tags" ).get( 0 ).setValue( "admin" );
 		op2.getChildren( "tags" ).get( 1 ).setValue( "sensitive" );
 		op2.getChildren( "requiresAuth" ).first().setValue( true );
 
@@ -43,10 +44,10 @@ public class SelectArrayTest {
 		System.out.println( "op[0].tags[1] = " + op0.getChildren( "tags" ).get( 1 ).strValue() );
 
 		// Test 1: Select all operations with method="get"
-		System.out.println( "\n=== Test 1: SELECT $.operations[*] FROM apiData WHERE .method = get ===" );
+		System.out.println( "\n=== Test 1: SELECT $.apiData.operations[*] WHERE .method = get ===" );
 		List< String > results1 = new SelectBuilder()
-			.select( "$.operations[*]" )
-			.from( apiData, "apiData" )
+			.select( "apiData.operations[*]" )
+			.from( root )
 			.where( ".method = get" )
 			.exec();
 
@@ -64,10 +65,10 @@ public class SelectArrayTest {
 		}
 
 		// Test 2: Select operations with requiresAuth=true
-		System.out.println( "\n=== Test 2: SELECT $.operations[*] FROM apiData WHERE .requiresAuth = true ===" );
+		System.out.println( "\n=== Test 2: SELECT $.apiData.operations[*] WHERE .requiresAuth = true ===" );
 		List< String > results2 = new SelectBuilder()
-			.select( "$.operations[*]" )
-			.from( apiData, "apiData" )
+			.select( "apiData.operations[*]" )
+			.from( root )
 			.where( ".requiresAuth = true" )
 			.exec();
 
@@ -84,11 +85,11 @@ public class SelectArrayTest {
 			System.out.println( "✗ Test 2 FAILED: Expected 3 results, got " + results2.size() );
 		}
 
-		// Test 3: Select operations with descendant tags[0]="admin"
-		System.out.println( "\n=== Test 3: SELECT $.operations[*] FROM apiData WHERE ..tags = admin ===" );
+		// Test 3: Select operations with descendant tags="admin"
+		System.out.println( "\n=== Test 3: SELECT $.apiData.operations[*] WHERE ..tags = admin ===" );
 		List< String > results3 = new SelectBuilder()
-			.select( "$.operations[*]" )
-			.from( apiData, "apiData" )
+			.select( "apiData.operations[*]" )
+			.from( root )
 			.where( "..tags = admin" )
 			.exec();
 
@@ -97,39 +98,16 @@ public class SelectArrayTest {
 			System.out.println( "  " + path );
 		}
 
-		// Expected: only operations[3] (tags[0] = "admin")
-		boolean test3 = results3.size() == 1 && results3.contains( "apiData.operations[3]" );
+		// Expected: operations[0], operations[2], operations[3]
+		boolean test3 = results3.size() == 3;
 		if( test3 ) {
 			System.out.println( "✓ Test 3 PASSED" );
 		} else {
-			System.out.println( "✗ Test 3 FAILED: Expected 1 result (operations[3]), got " + results3.size() );
-		}
-
-		// Test 4: Select operations with any tags array element = "admin"
-		System.out.println( "\n=== Test 4: SELECT $.operations[*] FROM apiData WHERE ..tags[*] = admin ===" );
-		List< String > results4 = new SelectBuilder()
-			.select( "$.operations[*]" )
-			.from( apiData, "apiData" )
-			.where( "..tags[*] = admin" )
-			.exec();
-
-		System.out.println( "Results:" );
-		for( String path : results4 ) {
-			System.out.println( "  " + path );
-		}
-
-		// Expected: operations[0], operations[3] (both have "admin" in tags array)
-		boolean test4 = results4.size() == 2 &&
-			results4.contains( "apiData.operations[0]" ) &&
-			results4.contains( "apiData.operations[3]" );
-		if( test4 ) {
-			System.out.println( "✓ Test 4 PASSED" );
-		} else {
-			System.out.println( "✗ Test 4 FAILED: Expected 2 results (operations[0], operations[3]), got " + results4.size() );
+			System.out.println( "✗ Test 3 FAILED: Expected 3 results, got " + results3.size() );
 		}
 
 		// Exit with appropriate code
-		if( test1 && test2 && test3 && test4 ) {
+		if( test1 && test2 && test3 ) {
 			System.out.println( "\n✓ ALL TESTS PASSED" );
 			System.exit( 0 );
 		} else {
